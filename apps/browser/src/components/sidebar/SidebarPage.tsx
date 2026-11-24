@@ -25,7 +25,7 @@ import { useToolbarRow } from "../toolbar/useToolbarRow";
 import { startsOffScreen } from "../../state/sidebar/geometry";
 import { toggleNewTabBar } from "../../state/omnibox/newTabBar";
 import { clearlyOverflows, DOCK_SHARE, DOCKED_ROW_PAD, dockedAfter, GLOW_ROOM, pageLayout, tilesFitDock, type PageSpot, type SidebarGeometry } from "./pageLayout";
-import { noteNewTabDocked } from "../../state/telemetry/sidebarScrollCounts";
+import { noteNewTabDocked, noteSidebarListHeld } from "../../state/telemetry/sidebarScrollCounts";
 import { noteSidebarPlayerStayedAcrossPages } from "../../state/telemetry/mediaCardCounts";
 import { PageRows } from "./PageRows";
 import { NewTabRow } from "./NewTabRow";
@@ -130,6 +130,9 @@ export const SidebarPage = memo(function SidebarPage({ profileId, slot, paging, 
   useEffect(() => () => forgetRowsScrolled(windowRef.current), []);
   const page = useRef<PageSpot>({ scrollY: 0, viewport: 0, regions: { pinnedGroups: 0, list: 0 }, tilesFixed: true, newTabAtTop: false, edgeLift: 0, shown: false, owns: false, scroller: null }).current;
   const scrollView = useRef<ScrollView | null>(null);
+  const [pointerIn, setPointerIn] = useState(false);
+  const contentHeight = useRef(0);
+  const heldThisVisit = useRef(false);
   useLayoutEffect(() => {
     page.scroller = scrollView.current;
     spots.set(profileId, page);
@@ -164,11 +167,16 @@ export const SidebarPage = memo(function SidebarPage({ profileId, slot, paging, 
   const applySlack = () => {
     if (resting || !canDock || height <= 0 || slack.current === null) return;
     const next = dockedAfter(docked, slack.current, playerTab && playerMotion.expandedSlot.current ? SIDEBAR_PLAYER_GROWTH : 0);
-    if (next === docked) return;
+    if (next === docked || (pointerIn && !next)) return;
     setDockedNow(next);
     if (current) noteNewTabDocked(next);
   };
   const onSlack = (e: LayoutChangeEvent) => {
+    const grew = slack.current !== null && e.nativeEvent.layout.height > slack.current;
+    if (pointerIn && grew && !heldThisVisit.current) {
+      heldThisVisit.current = true;
+      noteSidebarListHeld();
+    }
     slack.current = e.nativeEvent.layout.height;
     applySlack();
   };
@@ -210,6 +218,11 @@ export const SidebarPage = memo(function SidebarPage({ profileId, slot, paging, 
                 </View>
                 <Animated.View
                   style={{ flex: 1, marginTop: -GLOW_ROOM, overflow: "hidden", transform: [{ translateY: edge }] }}
+                  onMouseEnter={() => {
+                    heldThisVisit.current = false;
+                    setPointerIn(true);
+                  }}
+                  onMouseLeave={() => setPointerIn(false)}
                 >
                   <Animated.View style={{ flex: 1, overflow: "hidden", transform: [{ translateY: clipUnedged }] }}>
                         <Animated.ScrollView
@@ -226,10 +239,11 @@ export const SidebarPage = memo(function SidebarPage({ profileId, slot, paging, 
                           scrollEventThrottle={16}
                           onScroll={onScroll}
                           onContentSizeChange={(_, content) => {
+                            contentHeight.current = content;
                             scrollEdgeBelow.measure({ content });
                             selectedRow.relocate();
                           }}
-                          contentContainerStyle={{ flexGrow: 1, width, paddingHorizontal: layout.sidebarInset, paddingTop: LIST_PAD, paddingBottom: docked ? GLOW_ROOM : 0 }}
+                          contentContainerStyle={{ flexGrow: 1, width, minHeight: pointerIn ? contentHeight.current : undefined, paddingHorizontal: layout.sidebarInset, paddingTop: LIST_PAD, paddingBottom: docked ? GLOW_ROOM : 0 }}
                         >
                           <PageRows
                             windowId={windowId}
