@@ -215,8 +215,7 @@ export const noteTabSwipe = (surface: "toolbar" | "sidebarField", moved: boolean
 export const noteSwipeClose = (closed: boolean) => void counts[closed ? "littleArdiaSwipeCloses" : "littleArdiaSwipeCloseCancels"]++;
 export const noteExternalLink = (opened: "tab" | "littleArdia", settingOn: boolean) => void counts[opened === "tab" ? (settingOn ? "externalLinksTabSettingOn" : "externalLinksTabSettingOff") : settingOn ? "externalLinksLittleSettingOn" : "externalLinksLittleSettingOff"]++;
 
-export const noteGroupHeaderHide = () => counts.groupHeaderHides++;
-export const noteLiveFolderHeaderHide = () => counts.liveFolderHeaderHides++, noteLiveFolderTabsKept = (added: number) => (counts.liveFolderTabsKept += added);
+export const noteGroupHeaderHide = () => counts.groupHeaderHides++, noteLiveFolderHeaderHide = () => counts.liveFolderHeaderHides++, noteLiveFolderTabsKept = (added: number, consent: ConsentToken | null) => bump(consent, { liveFolderTabsKept: added });
 
 export const noteLinkTabWait = (wait: "matched" | "skipped" | "timedOut") => void counts[wait === "matched" ? "linkTabsMatched" : wait === "skipped" ? "linkTabWaitsSkipped" : "linkTabWaitTimeouts"]++;
 

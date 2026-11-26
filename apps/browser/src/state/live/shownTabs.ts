@@ -3,6 +3,8 @@ import { changedIds } from "../browser/changes";
 import { activeTabId } from "../browser/model";
 import { useBrowser, type BrowserState } from "../browser/store";
 import { isAsleep } from "../tabs/pageSession";
+import type { ConsentToken } from "../telemetry/choice";
+import { consentToken } from "../telemetry/client";
 import { noteLiveFolderTabsKept } from "../telemetry/usage";
 import { live, setLive, useLive } from "./store";
 import type { LiveFolder } from "./types";
@@ -57,13 +59,13 @@ function shownTabsAdded(next: ShownTabs, prev: ShownTabs): number {
 
 const hiddenItems = (folderId: string): ReadonlySet<string> => new Set([...(live().hidden[folderId] ?? []), ...(live().repoHidden[folderId] ?? [])].map((it) => it.id));
 
-function settle(before?: Before) {
+function settle(consent: ConsentToken | null, before?: Before) {
   const was = live().shownTabs;
   const next = settleLiveShownTabs(was, live().folders, useBrowser.getState(), hiddenItems, before);
   if (next === was) return;
   setLive({ shownTabs: next });
   const added = shownTabsAdded(next, was);
-  if (added) noteLiveFolderTabsKept(added);
+  if (added) noteLiveFolderTabsKept(added, consent);
 }
 
 export function hideShownTabs(folderId: string, windowId: string) {
@@ -79,9 +81,9 @@ let started = false;
 export function startLiveShownTabs() {
   if (started) return;
   started = true;
-  useBrowser.subscribeTo(["windows", "tabs"], (s, prev) => settle({ folders: live().folders, s: prev }));
+  useBrowser.subscribeTo(["windows", "tabs"], (s, prev) => settle(consentToken(), { folders: live().folders, s: prev }));
   useLive.subscribe((l, prev) => {
-    if (l.folders !== prev.folders) settle({ folders: prev.folders, s: useBrowser.getState() });
-    else if (l.hidden !== prev.hidden || l.repoHidden !== prev.repoHidden) settle();
+    if (l.folders !== prev.folders) settle(consentToken(), { folders: prev.folders, s: useBrowser.getState() });
+    else if (l.hidden !== prev.hidden || l.repoHidden !== prev.repoHidden) settle(consentToken());
   });
 }
