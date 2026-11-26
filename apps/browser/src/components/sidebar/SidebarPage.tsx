@@ -25,8 +25,9 @@ import { useToolbarRow } from "../toolbar/useToolbarRow";
 import { startsOffScreen } from "../../state/sidebar/geometry";
 import { toggleNewTabBar } from "../../state/omnibox/newTabBar";
 import { clearlyOverflows, DOCK_SHARE, DOCKED_ROW_PAD, dockedAfter, GLOW_ROOM, pageLayout, tilesFitDock, type PageSpot, type SidebarGeometry } from "./pageLayout";
-import { noteNewTabDocked, noteSidebarListHeld } from "../../state/telemetry/sidebarScrollCounts";
+import { noteNewTabDocked } from "../../state/telemetry/sidebarScrollCounts";
 import { noteSidebarPlayerStayedAcrossPages } from "../../state/telemetry/mediaCardCounts";
+import { useListHold } from "./listHold";
 import { PageRows } from "./PageRows";
 import { NewTabRow } from "./NewTabRow";
 import { SelectedRowPill, useSelectedRowAway } from "./SelectedRowPill";
@@ -130,9 +131,6 @@ export const SidebarPage = memo(function SidebarPage({ profileId, slot, paging, 
   useEffect(() => () => forgetRowsScrolled(windowRef.current), []);
   const page = useRef<PageSpot>({ scrollY: 0, viewport: 0, regions: { pinnedGroups: 0, list: 0 }, tilesFixed: true, newTabAtTop: false, edgeLift: 0, shown: false, owns: false, scroller: null }).current;
   const scrollView = useRef<ScrollView | null>(null);
-  const [pointerIn, setPointerIn] = useState(false);
-  const contentHeight = useRef(0);
-  const heldThisVisit = useRef(false);
   useLayoutEffect(() => {
     page.scroller = scrollView.current;
     spots.set(profileId, page);
@@ -164,21 +162,33 @@ export const SidebarPage = memo(function SidebarPage({ profileId, slot, paging, 
   const unedge = useMemo(() => Animated.multiply(edge, -1), [edge]);
   const clipUnedged = useMemo(() => Animated.add(unedge, playerMotion.listClip), [unedge, playerMotion.listClip]);
   const slack = useRef<number | null>(null);
-  const applySlack = () => {
-    if (resting || !canDock || height <= 0 || slack.current === null) return;
-    const next = dockedAfter(docked, slack.current, playerTab && playerMotion.expandedSlot.current ? SIDEBAR_PLAYER_GROWTH : 0);
-    if (next === docked || (pointerIn && !next)) return;
+  const dockingAfter = (free: number) => (resting || !canDock || height <= 0 ? docked : dockedAfter(docked, free, playerTab && playerMotion.expandedSlot.current ? SIDEBAR_PLAYER_GROWTH : 0));
+  const dock = (next: boolean) => {
+    if (next === docked) return;
     setDockedNow(next);
     if (current) noteNewTabDocked(next);
   };
+  const dockedRoom = useRef(0);
+  const hold = useListHold({
+    windowId,
+    profileId,
+    active: current && !resting,
+    free: () => slack.current ?? 0,
+    viewport: () => page.viewport,
+    docked: () => docked,
+    dockingAfter,
+    dock,
+    undockRoom: () => (docked && newTabShown ? dockedRoom.current : 0),
+  });
+  const applySlack = () => {
+    if (slack.current === null) return;
+    const next = dockingAfter(slack.current);
+    if (next || !hold.holding()) dock(next);
+  };
   const onSlack = (e: LayoutChangeEvent) => {
-    const grew = slack.current !== null && e.nativeEvent.layout.height > slack.current;
-    if (pointerIn && grew && !heldThisVisit.current) {
-      heldThisVisit.current = true;
-      noteSidebarListHeld();
-    }
     slack.current = e.nativeEvent.layout.height;
     applySlack();
+    hold.laidOut();
   };
   useEffect(applySlack, [height > 0, canDock, resting]);
   const inlineNewTab = !docked && newTabShown;
@@ -218,17 +228,15 @@ export const SidebarPage = memo(function SidebarPage({ profileId, slot, paging, 
                 </View>
                 <Animated.View
                   style={{ flex: 1, marginTop: -GLOW_ROOM, overflow: "hidden", transform: [{ translateY: edge }] }}
-                  onMouseEnter={() => {
-                    heldThisVisit.current = false;
-                    setPointerIn(true);
-                  }}
-                  onMouseLeave={() => setPointerIn(false)}
+                  onMouseEnter={hold.enter}
+                  onMouseLeave={hold.leave}
                 >
                   <Animated.View style={{ flex: 1, overflow: "hidden", transform: [{ translateY: clipUnedged }] }}>
                         <Animated.ScrollView
                           ref={scrollView}
                           onLayout={(e) => {
                             page.viewport = e.nativeEvent.layout.height;
+                            hold.resized();
                             scrollEdgeBelow.measure({ viewport: page.viewport });
                             if (page.owns) sharedGeometry.current.viewport = page.viewport;
                             selectedRow.relocate();
@@ -236,36 +244,39 @@ export const SidebarPage = memo(function SidebarPage({ profileId, slot, paging, 
                           }}
                           style={{ flex: 1, transform: [{ translateY: playerMotion.listUnclip }] }}
                           showsVerticalScrollIndicator={false}
+                          showsHorizontalScrollIndicator={false}
                           scrollEventThrottle={16}
                           onScroll={onScroll}
                           onContentSizeChange={(_, content) => {
-                            contentHeight.current = content;
+                            hold.measured(content);
                             scrollEdgeBelow.measure({ content });
                             selectedRow.relocate();
                           }}
-                          contentContainerStyle={{ flexGrow: 1, width, minHeight: pointerIn ? contentHeight.current : undefined, paddingHorizontal: layout.sidebarInset, paddingTop: LIST_PAD, paddingBottom: docked ? GLOW_ROOM : 0 }}
+                          contentContainerStyle={{ flexGrow: 1, width }}
                         >
-                          <PageRows
-                            windowId={windowId}
-                            profileId={profileId}
-                            current={current}
-                            rows={rows}
-                            lazy={lazy}
-                            offScreen={offScreen}
-                            tiles={scrolledTiles}
-                            underDockedTiles={fixedTiles.length > 0}
-                            innerWidth={innerWidth}
-                            inlineNewTab={inlineNewTab}
-                            controller={liveDrag}
-                            geometry={undefined}
-                            regions={page.regions}
-                            viewport={listViewport}
-                          />
-                          <View key={`${docked ? "docked" : "inline"}${canDock ? "" : ":fixed"}${resting ? ":resting" : ""}`} style={{ flexGrow: 1, minHeight: !canDock && inlineNewTab ? 24 : 0 }}>
-                            <ContextMenuArea style={{ flex: 1 }} onLayout={onSlack} onContextMenu={() => void openSidebarMenu(windowId)}>
-                              <WindowDragRegion style={{ flex: 1 }} titleBarDoubleClick={false} onRegionDoubleClick={() => toggleNewTabBar(windowId) || newTab(windowId, { newTabCommand: true })} />
-                            </ContextMenuArea>
-                          </View>
+                          <Animated.View style={{ flexGrow: 1, minHeight: hold.minHeight, paddingHorizontal: layout.sidebarInset, paddingTop: LIST_PAD, paddingBottom: docked ? GLOW_ROOM : 0 }}>
+                            <PageRows
+                              windowId={windowId}
+                              profileId={profileId}
+                              current={current}
+                              rows={rows}
+                              lazy={lazy}
+                              offScreen={offScreen}
+                              tiles={scrolledTiles}
+                              underDockedTiles={fixedTiles.length > 0}
+                              innerWidth={innerWidth}
+                              inlineNewTab={inlineNewTab}
+                              controller={liveDrag}
+                              geometry={undefined}
+                              regions={page.regions}
+                              viewport={listViewport}
+                            />
+                            <View key={`${docked ? "docked" : "inline"}${canDock ? "" : ":fixed"}${resting ? ":resting" : ""}`} style={{ flexGrow: 1, minHeight: !canDock && inlineNewTab ? 24 : 0 }}>
+                              <ContextMenuArea style={{ flex: 1 }} onLayout={onSlack} onContextMenu={() => void openSidebarMenu(windowId)}>
+                                <WindowDragRegion style={{ flex: 1 }} titleBarDoubleClick={false} onRegionDoubleClick={() => toggleNewTabBar(windowId) || newTab(windowId, { newTabCommand: true })} />
+                              </ContextMenuArea>
+                            </View>
+                          </Animated.View>
                         </Animated.ScrollView>
                   </Animated.View>
                   {geometry ? <SelectedRowPill windowId={windowId} tracker={selectedRow} lift={edgeLift} unedge={unedge} bottomShift={playerMotion.listClip} /> : null}
@@ -280,7 +291,7 @@ export const SidebarPage = memo(function SidebarPage({ profileId, slot, paging, 
                   </Animated.View>
                 ) : null}
                 {docked && newTabShown ? (
-                  <View style={{ paddingHorizontal: layout.sidebarInset, paddingVertical: DOCKED_ROW_PAD }}>
+                  <View style={{ paddingHorizontal: layout.sidebarInset, paddingVertical: DOCKED_ROW_PAD }} onLayout={(e) => (dockedRoom.current = e.nativeEvent.layout.height)}>
                     <NewTabRow windowId={windowId} />
                   </View>
                 ) : null}

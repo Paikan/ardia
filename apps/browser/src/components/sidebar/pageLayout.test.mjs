@@ -76,8 +76,10 @@ test("a free-space reading that arrives before the sidebar has a height is kept 
 
 test("rows leaving under the pointer don't shorten the list or undock the New Tab row until the pointer leaves", () => {
   const page = readFileSync(new URL("./SidebarPage.tsx", import.meta.url), "utf8");
-  assert.match(page, /minHeight: pointerIn \? contentHeight\.current : undefined/);
-  assert.match(page, /pointerIn && !next/);
+  assert.match(page, /minHeight: hold\.minHeight/);
+  assert.match(page, /if \(next \|\| !hold\.holding\(\)\) dock\(next\);/);
+  assert.match(page, /active: current && !resting/);
+  assert.match(page, /showsHorizontalScrollIndicator=\{false\}/, "no legacy horizontal scroller margin under the list, so the list fills the scroll view");
 });
 
 test("no sidebar page mounts past its warm first screen while it isn't the shown one, during a hold included", () => {
